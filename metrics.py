@@ -114,7 +114,7 @@ def drawdown_stats(
                     dd = (peak - val) / peak
                     max_dd = max(max_dd, dd)
                 else:
-                    logger.error(f"peak = {peak}, prevented: ZeroDivisionError")
+
                     continue
             drawdown = max_dd
         case "current":
@@ -124,7 +124,6 @@ def drawdown_stats(
             if peak != 0.0:
                 drawdown = (peak - current) / peak
             else:
-                logger.error(f"peak = {peak}, prevented: ZeroDivisionError")
                 return 0.0
     return drawdown * 100.0
 
@@ -154,9 +153,7 @@ def compute_risk(details: Dict[str, Any]) -> Dict[str, float]:
             daily_return = (cur - prev) / prev
             daily.append(daily_return)
         else:
-            logger.error(f"prev = {prev}, prevented: ZeroDivisionError")
             continue
-
     vol = statistics.stdev(daily) if len(daily) >= 2 else 0.0 # or pstdev
     metrics["daily_volatility"] = vol
     
@@ -182,7 +179,6 @@ def compute_risk(details: Dict[str, Any]) -> Dict[str, float]:
                 drawdown = (peak - value) / peak
             else:
                 drawdown = 0.0
-                logger.error(f"peak = {peak}, prevented: ZeroDivisionError")
             if peak > 0.0 and drawdown >= 0.10 and dd_start_ts is None:
                 dd_start_ts = ts
     metrics["average_recovery_days"] = statistics.mean(recovery_periods) if recovery_periods else 0.0
@@ -317,7 +313,6 @@ def compute_trend(details: Dict[str, Any]) -> Dict[str, float]:
             daily_return = (current - previous) / previous
             daily.append(daily_return)
         else:
-            logger.error(f"previous = {previous}, prevented: ZeroDivisionError")
             continue
     # в долях
     vol_7d = statistics.pstdev(daily) if len(daily) >= 2 else 0.0

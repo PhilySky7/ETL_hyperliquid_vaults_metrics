@@ -125,7 +125,7 @@ make run              # run python3 main.py
 - Unable to connect to the database: check the `.env`, database availability, and user rights.
 - Slow processing: try with a small batch (slices) at first.
 - Empty data/metric errors: functions in `metrics.py ` are protected from `None`, but check if the API formats match.
-- Pay attention and to Average Recovery Days, Average Position Holding Time calculating.
+- Pay attention to Average Recovery Days, Average Position Holding Time calculating.
 - In addition, there is a fallback both for TVL and Vault Age days.
 
 ## License
