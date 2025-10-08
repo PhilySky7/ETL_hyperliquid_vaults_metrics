@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+*.mypy_cache/
+
+# Environments
+.venv/
+.env
+.envrc
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build/Dist
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/

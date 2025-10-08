@@ -20,11 +20,14 @@ def _to_float(value) -> float:
         return 0.0
     if isinstance(value, (int, float)):
         return float(value)
-    try:
-        return float(str(value))
-    except Exception as exc:
-        logger.debug(f"_to_float: failed to convert '{value}' -> 0.0 ({exc})")
-        return 0.0
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except Exception as exc:
+            logger.error(f"{exc} cannot cast string '{value}' to float")
+            return 0.0
+    logger.error(f"_to_float: unexpected type {type(value)}: {value}")
+    return 0.0
 
 def get_porfolio_data(details: Dict[str, Any], period: str) -> Dict[str, Any]:
     for p_name, p_data in details.get("portfolio", []):
@@ -200,6 +203,9 @@ def compute_trading(fills: List[Dict[str, Any]]) -> Dict[str, float]:
     coins = defaultdict(lambda: {"opens": [], "closes": []})
 
     for fill in fills:
+        if not isinstance(fill, dict):
+            logger.warning(f"Некорректный fill: {fill} ({type(fill)}), пропускается!")
+            continue
         # Daily Volume, Trades Per Day, Avg Trade Size (1, 2, 3)
         px = _to_float(fill.get("px", 0))
         sz = _to_float(fill.get("sz", 0))
@@ -386,6 +392,9 @@ def compute_efficiency(details: Dict[str, Any], fills: List[Dict[str, Any]]) -> 
     pnls = []
     if fills:
         for fill in fills:
+            if not isinstance(fill, dict):
+                logger.warning(f"Некорректный fill: {fill} ({type(fill)}), пропускается!")
+                continue
             closed_pnl = fill.get("closedPnl")
             if closed_pnl is not None:
                 closed_pnl = _to_float(closed_pnl)

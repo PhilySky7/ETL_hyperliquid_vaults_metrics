@@ -59,8 +59,14 @@ cp .env_sample .env
 ```
 
 5. Run project:
+Locally:
 ```bash
 make run
+```
+
+In container:
+```bash
+make run_hl_etl_in_container
 ```
 
 ### Database Migration
