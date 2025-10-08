@@ -59,6 +59,7 @@ cp .env_sample .env
 ```
 
 5. Run project:
+
 Locally:
 ```bash
 make run
@@ -84,7 +85,7 @@ python3 main.py
 Or, use Makefile command:
 
 ```bash
-make main.py
+make run
 ```
 
 The logs of the INFO level display the key stages of execution.
