@@ -336,7 +336,7 @@ def compute_trend(details: Dict[str, Any]) -> Dict[str, float]:
             key=lambda i: account_history[i][1],
         )
         ath_ts = account_history[max_idx][0]
-        current_ts = account_history[-1][0]
+        current_ts = account_history[-1][0] if account_history else 0
         metrics["days_since_ath"] = int(
             (current_ts - ath_ts) / MS_PER_DAY
         )
@@ -362,7 +362,7 @@ def compute_capital(details: Dict[str, Any]) -> Dict[str, float]:
 
     # no access to vaultSummaries to parse tvl and createTimeMillis
     # fallback:
-    metrics["tvl"] = account_history[-1][1]
+    metrics["tvl"] = account_history[-1][1] if account_history else 0.0
 
     followers = details.get("followers", [])
     metrics["follower_count"] = len(followers)
