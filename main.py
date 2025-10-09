@@ -2,6 +2,7 @@ import logging
 from dotenv import load_dotenv
 from time import perf_counter, sleep
 import os
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, getcontext
 
 from api_client import get_vault_addresses, fetch_details
 from metrics import (
@@ -15,12 +16,13 @@ from metrics import (
 from database import get_connection, upsert_vault_data
 
 load_dotenv()
+getcontext().prec = 28
 BATCH_SIZE = int(os.getenv("BATCH_SIZE"))
 BATCH_SLEEP_SECONDS = float(os.getenv("BATCH_SLEEP_SECONDS"))
 
-# Database field limits
-DECIMAL_18_8_MAX = 9999999999.99999999  # DECIMAL(18,8) maximum value
-DECIMAL_18_10_MAX = 9999999999.9999999999  # DECIMAL(18,10) maximum value
+# Database field limits (as Decimal to avoid float rounding to 10^10)
+DECIMAL_18_8_MAX = Decimal("9999999999.99999999")  # DECIMAL(18,8) maximum value
+DECIMAL_18_10_MAX = Decimal("9999999999.9999999999")  # DECIMAL(18,10) maximum value
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +32,7 @@ logger = logging.getLogger("MainScript")
 
 
 
-def validate_decimal_value(value, field_name, max_value=DECIMAL_18_8_MAX):
+def validate_decimal_value(value, field_name, max_value=DECIMAL_18_8_MAX, scale_places: int = 8):
     """
     Validate and clamp decimal values to prevent database overflow.
     
@@ -38,25 +40,31 @@ def validate_decimal_value(value, field_name, max_value=DECIMAL_18_8_MAX):
         value: The value to validate
         field_name: Name of the field for logging
         max_value: Maximum allowed value (default for DECIMAL(18,8))
+        scale_places: Number of decimal places to quantize to (8 for DECIMAL(18,8), 10 for DECIMAL(18,10))
     
     Returns:
-        Clamped value within valid range
+        Clamped Decimal value within valid range and precision
     """
     if value is None:
-        return 0.0
-    
+        return Decimal("0")
+
     try:
-        float_value = float(value)
-        if float_value > max_value:
-            logger.warning(f"Field '{field_name}' value {float_value} exceeds upper limit {max_value}, clamping to {max_value}")
-            return max_value
-        elif float_value < -max_value:
-            logger.warning(f"Field '{field_name}' value {float_value} exceeds lower limit {-max_value}, clamping to {-max_value}")
-            return -max_value
-        return float_value
-    except (ValueError, TypeError):
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
         logger.warning(f"Field '{field_name}' has invalid value {value}, setting to 0.0")
-        return 0.0
+        return Decimal("0")
+
+    if decimal_value > max_value:
+        logger.warning(f"Field '{field_name}' value {decimal_value} exceeds upper limit {max_value}, clamping to {max_value}")
+        decimal_value = max_value
+    elif decimal_value < -max_value:
+        logger.warning(f"Field '{field_name}' value {decimal_value} exceeds lower limit {-max_value}, clamping to {-max_value}")
+        decimal_value = -max_value
+
+    # Quantize to avoid rounding up beyond the max at the database scale
+    quant = Decimal(1).scaleb(-scale_places)  # e.g., 1e-8 or 1e-10
+    decimal_value = decimal_value.quantize(quant, rounding=ROUND_DOWN)
+    return decimal_value
 
 
 def get_users_from_details(details: list):
@@ -86,36 +94,36 @@ def build_vault(vault_address: str, vault_detail: dict, user_fills: list) -> dic
     row = {
         "vault_address": vault_address,
         "name": name,
-        "apr": validate_decimal_value(performance.get("apr", 0.0), "apr"),
+        "apr": validate_decimal_value(performance.get("apr", 0.0), "apr", max_value=DECIMAL_18_8_MAX, scale_places=8),
         "total_pnl_usd": performance.get("total_pnl_usd", 0.0),  # DECIMAL(38,18) - no validation needed
-        "total_pnl_percent": validate_decimal_value(performance.get("total_pnl_percent", 0.0), "total_pnl_percent"),
-        "monthly_account_value_change": validate_decimal_value(performance.get("monthly_account_value_change", 0.0), "monthly_account_value_change"),
-        "weekly_account_value_change": validate_decimal_value(performance.get("weekly_account_value_change", 0.0), "weekly_account_value_change"),
-        "win_days_ratio": validate_decimal_value(performance.get("win_days_ratio", 0.0), "win_days_ratio"),
-        "max_drawdown": validate_decimal_value(risk.get("max_drawdown", 0.0), "max_drawdown"),
-        "current_drawdown": validate_decimal_value(risk.get("current_drawdown", 0.0), "current_drawdown"),
-        "daily_volatility": validate_decimal_value(risk.get("daily_volatility", 0.0), "daily_volatility", max_value=DECIMAL_18_10_MAX),  # DECIMAL(18,10)
-        "sharpe_ratio": validate_decimal_value(risk.get("sharpe_ratio", 0.0), "sharpe_ratio", max_value=DECIMAL_18_10_MAX),  # DECIMAL(18,10)
-        "average_recovery_days": validate_decimal_value(risk.get("average_recovery_days", 0.0), "average_recovery_days"),
+        "total_pnl_percent": validate_decimal_value(performance.get("total_pnl_percent", 0.0), "total_pnl_percent", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "monthly_account_value_change": validate_decimal_value(performance.get("monthly_account_value_change", 0.0), "monthly_account_value_change", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "weekly_account_value_change": validate_decimal_value(performance.get("weekly_account_value_change", 0.0), "weekly_account_value_change", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "win_days_ratio": validate_decimal_value(performance.get("win_days_ratio", 0.0), "win_days_ratio", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "max_drawdown": validate_decimal_value(risk.get("max_drawdown", 0.0), "max_drawdown", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "current_drawdown": validate_decimal_value(risk.get("current_drawdown", 0.0), "current_drawdown", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "daily_volatility": validate_decimal_value(risk.get("daily_volatility", 0.0), "daily_volatility", max_value=DECIMAL_18_10_MAX, scale_places=10),  # DECIMAL(18,10)
+        "sharpe_ratio": validate_decimal_value(risk.get("sharpe_ratio", 0.0), "sharpe_ratio", max_value=DECIMAL_18_10_MAX, scale_places=10),  # DECIMAL(18,10)
+        "average_recovery_days": validate_decimal_value(risk.get("average_recovery_days", 0.0), "average_recovery_days", max_value=DECIMAL_18_8_MAX, scale_places=8),
         "daily_volume": trading.get("daily_volume", 0.0),  # DECIMAL(38,18) - no validation needed
-        "trades_per_day": validate_decimal_value(trading.get("trades_per_day", 0.0), "trades_per_day"),
+        "trades_per_day": validate_decimal_value(trading.get("trades_per_day", 0.0), "trades_per_day", max_value=DECIMAL_18_8_MAX, scale_places=8),
         "average_trade_size": trading.get("average_trade_size", 0.0),  # DECIMAL(38,18) - no validation needed
-        "average_position_holding_time": validate_decimal_value(trading.get("average_position_holding_time", 0.0), "average_position_holding_time"),
-        "top_token_volume_share": validate_decimal_value(trading.get("top_token_volume_share", 0.0), "top_token_volume_share"),
-        "seven_day_change": validate_decimal_value(trend.get("seven_day_change", 0.0), "seven_day_change"),
-        "thirty_day_change": validate_decimal_value(trend.get("thirty_day_change", 0.0), "thirty_day_change"),
-        "momentum_score": validate_decimal_value(trend.get("momentum_score", 0.0), "momentum_score", max_value=DECIMAL_18_10_MAX),  # DECIMAL(18,10)
+        "average_position_holding_time": validate_decimal_value(trading.get("average_position_holding_time", 0.0), "average_position_holding_time", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "top_token_volume_share": validate_decimal_value(trading.get("top_token_volume_share", 0.0), "top_token_volume_share", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "seven_day_change": validate_decimal_value(trend.get("seven_day_change", 0.0), "seven_day_change", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "thirty_day_change": validate_decimal_value(trend.get("thirty_day_change", 0.0), "thirty_day_change", max_value=DECIMAL_18_8_MAX, scale_places=8),
+        "momentum_score": validate_decimal_value(trend.get("momentum_score", 0.0), "momentum_score", max_value=DECIMAL_18_10_MAX, scale_places=10),  # DECIMAL(18,10)
         "days_since_ath": trend.get("days_since_ath", 0),  # INTEGER
         "consecutive_positive_days": trend.get("consecutive_positive_days", 0),  # INTEGER
         "tvl": capital.get("tvl", 0.0),  # DECIMAL(38,18) - no validation needed
         "follower_count": capital.get("follower_count", 0),  # INTEGER
         "average_investment_per_follower": capital.get("average_investment_per_follower", 0.0),  # DECIMAL(38,18) - no validation needed
         "vault_age_days": capital.get("vault_age_days", 0),  # INTEGER
-        "leader_commission_rate": validate_decimal_value(capital.get("leader_commission_rate", 0.0), "leader_commission_rate"),
+        "leader_commission_rate": validate_decimal_value(capital.get("leader_commission_rate", 0.0), "leader_commission_rate", max_value=DECIMAL_18_8_MAX, scale_places=8),
         "average_pnl_per_trade": efficiency.get("average_pnl_per_trade", 0.0),  # DECIMAL(38,18) - no validation needed
-        "profit_factor": validate_decimal_value(efficiency.get("profit_factor", 0.0), "profit_factor", max_value=DECIMAL_18_10_MAX),  # DECIMAL(18,10)
-        "return_to_drawdown_ratio": validate_decimal_value(efficiency.get("return_to_drawdown_ratio", 0.0), "return_to_drawdown_ratio", max_value=DECIMAL_18_10_MAX),  # DECIMAL(18,10)
-        "capital_efficiency": validate_decimal_value(efficiency.get("capital_efficiency", 0.0), "capital_efficiency"),
+        "profit_factor": validate_decimal_value(efficiency.get("profit_factor", 0.0), "profit_factor", max_value=DECIMAL_18_10_MAX, scale_places=10),  # DECIMAL(18,10)
+        "return_to_drawdown_ratio": validate_decimal_value(efficiency.get("return_to_drawdown_ratio", 0.0), "return_to_drawdown_ratio", max_value=DECIMAL_18_10_MAX, scale_places=10),  # DECIMAL(18,10)
+        "capital_efficiency": validate_decimal_value(efficiency.get("capital_efficiency", 0.0), "capital_efficiency", max_value=DECIMAL_18_8_MAX, scale_places=8),
     }
     return row
 
