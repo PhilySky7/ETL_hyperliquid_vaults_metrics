@@ -1,8 +1,12 @@
+-include .env
+
+export
+
 makemigrations:
-	python3 database.py
+	uv run database.py
 
 run:
-	python3 main.py
+	uv run main.py
 
 run_hl_etl_in_container:
 	docker compose build && \
@@ -12,3 +16,6 @@ run_hl_etl_in_container:
 
 logs:
 	docker compose logs -f
+
+db_connect:
+	docker compose exec -it db psql -U ${DB_USER} -d ${DB_NAME}

@@ -43,15 +43,12 @@ def _series_values(bucket: Dict[str, Any], field: str) -> List[Tuple[int, float]
 
 def pct_change(period):
         series = _series_values(period, "accountValueHistory")
-        if len(series) >= 2 and series[0][1] != 0:
-            return ((series[-1][1] - series[0][1]) / series[0][1]) * 100.0
+        if series and len(series) >= 2 and series[1][1] != 0:
+            return ((series[-1][1] - series[1][1]) / series[1][1]) * 100.0
         return 0.0
 
 def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
     metrics: Dict[str, float] = {}
-
-    all_time = get_porfolio_data(details, "allTime")
-    account_history = _series_values(all_time, "accountValueHistory")
 
     apr = _to_float(details.get("apr", 0.0))
     metrics["apr"] = apr * 100  # доли (0..1) в проценты
@@ -60,17 +57,19 @@ def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
     last_pnl = _to_float(pnl_history[-1][1]) if pnl_history else 0.0
     metrics["total_pnl_usd"] = last_pnl
 
+    all_time = get_porfolio_data(details, "allTime")
+    account_history = _series_values(all_time, "accountValueHistory")
+
     try:
-        if not account_history or not pnl_history:
-            metrics["total_pnl_percent"] = 0.0
-        else:
-            current_pnl = _to_float(pnl_history[-1][1])
-            start_value = _to_float(account_history[0][1])
+        if account_history and last_pnl and len(account_history) >= 2:
+            start_value = _to_float(account_history[1][1])
             metrics["total_pnl_percent"] = (
-                ((current_pnl - start_value) / start_value) * 100.0
+                (last_pnl / start_value) * 100.0
                 if start_value
                 else 0.0
             )
+        else:
+            metrics["total_pnl_percent"] = 0.0
     except Exception as e:
         logger.error(f"Ошибка расчета Total PnL Percent: {e}")
         metrics["total_pnl_percent"] = 0.0
@@ -79,7 +78,6 @@ def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
     month = get_porfolio_data(details, "month")
     week = get_porfolio_data(details, "week")
     
-
     metrics["monthly_account_value_change"] = pct_change(month)
     metrics["weekly_account_value_change"] = pct_change(week)
 
@@ -87,7 +85,7 @@ def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
     win_days = 0
     total_days = len(pnl_history) - 1
     if len(pnl_history) >= 2 and total_days != 0:
-        for i in range(1, len(pnl_history)):
+        for i in range(2, len(pnl_history)):
             if pnl_history[i][1] > pnl_history[i-1][1]:
                 win_days += 1
         metrics["win_days_ratio"] = (win_days / total_days) * 100.0

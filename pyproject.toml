@@ -1,0 +1,15 @@
+[project]
+name = "hl-etl"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp==3.12.15",
+    "psycopg2-binary==2.9.10",
+    "python-dotenv==1.1.1",
+    "requests==2.32.5",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.0",
+]

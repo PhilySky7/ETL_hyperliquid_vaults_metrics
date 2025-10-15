@@ -50,7 +50,7 @@ source .venv/bin/activate
 
 3. Install dependencies:
 ```bash
-uv pip install -r requirements.txt
+uv sync
 ```
 
 4. Copy environment sample
@@ -79,7 +79,7 @@ make makemigrations
 ### ETL Launch
 Sequential run (vaultsAddresses → vaultDetails → userFills → metrics → upsert):
 ```bash
-python3 main.py
+uv run main.py
 ```
 
 Or, use Makefile command:
@@ -90,7 +90,20 @@ make run
 
 The logs of the INFO level display the key stages of execution.
 
-> For debugging in `main.py ` a slice of the first N addresses is used. Remove the slices to process the entire list.
+> For better perfomance set optimal BATCH_SIZE in `.env`.
+
+### Access to PostgreSQL
+```bash
+docker compose exec -it db psql -U postgres -d hyperliquid
+```
+- db: service name in docker-compose.yml
+- postgres: DB_USER from `.env`
+- hyperliquid: DB_NAME from `.env`
+
+Or, use Makefile command:
+```bash
+make db_connect
+```
 
 ### Project Structure
 ```
@@ -100,7 +113,10 @@ project/
 ├── main.py            # Main script
 ├── metrics.py         # Metrics calculation (performance, risk, trading, trend, capital, efficiency)
 ├── schema.sql         # SQL schema of the vaults table
-├── requirements.txt   # Dependencies
+├── pyproject.toml     # Dependencies
+├── uv.lock            # lock dependencie's versions
+├── Dockerfile         # Building app environment
+├── docker-compose.yml # Containers manager
 ├── Makefile           # Fast usage
 └── .env_sample        # .env sample
 ```
@@ -124,13 +140,16 @@ logging.basicConfig(
 
 ### Makefile
 ```bash
-make makemigrations   # apply schema.sql via database.py
-make run              # run python3 main.py
+make makemigrations          # apply schema.sql via database.py
+make run                     # run python3 main.py
+make run_hl_etl_in_container # run project in container
+make logs                    # view logs
+make db_connect              # connect to db in container
 ```
 
 ### Possible issues
 - Unable to connect to the database: check the `.env`, database availability, and user rights.
-- Slow processing: try with a small batch (slices) at first.
+- Slow processing: try with a small BATCH_SIZE at first.
 - Empty data/metric errors: functions in `metrics.py ` are protected from `None`, but check if the API formats match.
 - Pay attention to Average Recovery Days, Average Position Holding Time calculating.
 - In addition, there is a fallback both for TVL and Vault Age days.
