@@ -43,8 +43,8 @@ def _series_values(bucket: Dict[str, Any], field: str) -> List[Tuple[int, float]
 
 def pct_change(period):
         series = _series_values(period, "accountValueHistory")
-        if series and len(series) >= 2 and series[1][1] != 0:
-            return ((series[-1][1] - series[1][1]) / series[1][1]) * 100.0
+        if series and len(series) >= 2 and series[0][1] >= 0.01:
+            return ((series[-1][1] - series[0][1]) / series[0][1]) * 100.0
         return 0.0
 
 def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
@@ -53,11 +53,12 @@ def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
     apr = _to_float(details.get("apr", 0.0))
     metrics["apr"] = apr * 100  # доли (0..1) в проценты
 
+    all_time = get_porfolio_data(details, "allTime")
+
     pnl_history = _series_values(all_time, "pnlHistory")
     last_pnl = _to_float(pnl_history[-1][1]) if pnl_history else 0.0
     metrics["total_pnl_usd"] = last_pnl
 
-    all_time = get_porfolio_data(details, "allTime")
     account_history = _series_values(all_time, "accountValueHistory")
 
     try:
@@ -65,7 +66,7 @@ def compute_performance(details: Dict[str, Any]) -> Dict[str, float]:
             start_value = _to_float(account_history[1][1])
             metrics["total_pnl_percent"] = (
                 (last_pnl / start_value) * 100.0
-                if start_value
+                if start_value >= 0.01
                 else 0.0
             )
         else:
@@ -104,25 +105,28 @@ def drawdown_stats(
     if not account_history:
         logger.warning("drawdown_stats: empty account_history -> 0.0")
         return 0.0
+        
     match drawdown_type:
         case "max":
-            peak = account_history[0][1]
-            max_dd = 0.0
-            for _, val in account_history:
-                if val > peak:
-                    peak = val
-                if peak != 0.0:
-                    dd = (peak - val) / peak
-                    max_dd = max(max_dd, dd)
-                else:
-
-                    continue
-            drawdown = max_dd
+            if len(account_history) > 2:
+                peak = account_history[1][1]
+                max_dd = 0.0
+                for _, val in account_history[2:]:
+                    if val > peak:
+                        peak = val
+                    if peak >= 0.01:
+                        dd = (peak - val) / peak
+                        max_dd = max(max_dd, dd)
+                    else:
+                        continue
+                drawdown = max_dd
+            else:
+                return 0.0
         case "current":
-            values = [_to_float(item[1]) for item in account_history]
+            values = [item[1] for item in account_history]
             peak = max(values)
             current = values[-1]
-            if peak != 0.0:
+            if peak >= 0.01:
                 drawdown = (peak - current) / peak
             else:
                 return 0.0
@@ -147,42 +151,50 @@ def compute_risk(details: Dict[str, Any]) -> Dict[str, float]:
 
     # daily volatility
     daily = []
-    for i in range(1, len(account_history)):
-        prev = account_history[i-1][1]
-        cur = account_history[i][1]
-        if prev != 0:
-            daily_return = (cur - prev) / prev
-            daily.append(daily_return)
-        else:
-            continue
+    try:
+        if account_history and len(account_history) > 2:
+            for i in range(2, len(account_history)):
+                prev = account_history[i-1][1]
+                cur = account_history[i][1]
+                if prev != 0 and prev >= 0.01:
+                    daily_return = (cur - prev) / prev
+                    daily.append(daily_return)
+                else:
+                    continue
+    except Exception as e:
+        logger.error(f"Ошибка расчета Daily Volatility: {e}")
+    
     vol = statistics.stdev(daily) if len(daily) >= 2 else 0.0 # or pstdev
     metrics["daily_volatility"] = vol
     
     avg_return = statistics.mean(daily) if daily else 0.0
     excess_return = avg_return - DAILY_RISK_FREE
-    metrics["sharpe_ratio"] = (excess_return / vol) * math.sqrt(365.0) if vol > 0 else 0.0
+    metrics["sharpe_ratio"] = (excess_return / vol) * math.sqrt(365.0) if vol != 0 else 0.0
     
     # recovery days 10%+
-    recovery_periods = []
-    peak = -1.0
-    dd_start_ts = None
-    for ts, value in account_history:
-        if value > peak:
-            peak = value
-            if dd_start_ts is not None:
-                # восстановление к новому пику
-                days = (ts - dd_start_ts) / (MS_PER_DAY)
-                if days > 0:
-                    recovery_periods.append(days)
-                dd_start_ts = None
-        else:
-            if peak != 0.0:
-                drawdown = (peak - value) / peak
+    if account_history and len(account_history) > 2:
+        recovery_periods = []
+        peak = account_history[1][1] #check
+        dd_start_ts = None
+        for ts, value in account_history[2:]:
+            if value > peak:
+                peak = value
+                if dd_start_ts is not None:
+                    # восстановление к новому пику
+                    days = (ts - dd_start_ts) / (MS_PER_DAY)
+                    if days > 0:
+                        recovery_periods.append(days)
+                    dd_start_ts = None
             else:
-                drawdown = 0.0
-            if peak > 0.0 and drawdown >= 0.10 and dd_start_ts is None:
-                dd_start_ts = ts
-    metrics["average_recovery_days"] = statistics.mean(recovery_periods) if recovery_periods else 0.0
+                if peak >= 0.01:
+                    drawdown = (peak - value) / peak
+                else:
+                    drawdown = 0.0
+                if peak >= 0.01 and drawdown >= 0.10 and dd_start_ts is None:
+                    dd_start_ts = ts
+        metrics["average_recovery_days"] = statistics.mean(recovery_periods) if recovery_periods else 0.0
+    else:
+        metrics["average_recovery_days"] = 0.0
     return metrics
 
 def compute_trading(fills: List[Dict[str, Any]]) -> Dict[str, float]:
@@ -297,27 +309,26 @@ def compute_trading(fills: List[Dict[str, Any]]) -> Dict[str, float]:
 def compute_trend(details: Dict[str, Any]) -> Dict[str, float]:
     metrics: Dict[str, float] = {}
 
-    all_time = get_porfolio_data(details, "allTime")
-    account_history = _series_values(all_time, "accountValueHistory")
-
     week = get_porfolio_data(details, "week")
     month = get_porfolio_data(details, "month")
-
     # в процентах
     metrics["seven_day_change"] = pct_change(week)
     metrics["thirty_day_change"] = pct_change(month)
     
+    all_time = get_porfolio_data(details, "allTime")
+    account_history = _series_values(all_time, "accountValueHistory")
+
     # momentum на согласованной базе: 7d / std(дневн. доходностей за 7д)
-    
     daily = []
-    for i in range(1, min(8, len(account_history))):
-        previous = account_history[-i-1][1]
-        current = account_history[-i][1]
-        if previous != 0:
-            daily_return = (current - previous) / previous
-            daily.append(daily_return)
-        else:
-            continue
+    if account_history and len(account_history) >= 2:
+        for i in range(1, min(8, len(account_history))):
+            previous = account_history[-i-1][1]
+            current = account_history[-i][1]
+            if previous >= 0.01:
+                daily_return = (current - previous) / previous
+                daily.append(daily_return)
+            else:
+                continue
     # в долях
     vol_7d = statistics.pstdev(daily) if len(daily) >= 2 else 0.0
 
@@ -328,13 +339,13 @@ def compute_trend(details: Dict[str, Any]) -> Dict[str, float]:
     )
     
     # days since ATH
-    if account_history:
+    if account_history and len(account_history) >= 2:
         max_idx = max(
             range(len(account_history)),
             key=lambda i: account_history[i][1],
         )
         ath_ts = account_history[max_idx][0]
-        current_ts = account_history[-1][0] if account_history else 0
+        current_ts = account_history[-1][0]
         metrics["days_since_ath"] = int(
             (current_ts - ath_ts) / MS_PER_DAY
         )
@@ -344,12 +355,15 @@ def compute_trend(details: Dict[str, Any]) -> Dict[str, float]:
     # consecutive positive days по pnlHistory
     pnl_history = _series_values(all_time, "pnlHistory")
     counter_positive = 0
-    for i in range(len(pnl_history)-1, 0, -1):
-        if (pnl_history[i][1] - pnl_history[i-1][1]) > 0:
-            counter_positive += 1
-        else:
-            break
-    metrics["consecutive_positive_days"] = counter_positive
+    if len(pnl_history) >= 2:
+        for i in range(len(pnl_history)-1, 1, -1):
+            if (pnl_history[i][1] - pnl_history[i-1][1]) > 0:
+                counter_positive += 1
+            else:
+                break
+        metrics["consecutive_positive_days"] = counter_positive
+    else:
+        metrics["consecutive_positive_days"] = 0.0
     return metrics
 
 def compute_capital(details: Dict[str, Any]) -> Dict[str, float]:
@@ -383,9 +397,6 @@ def compute_capital(details: Dict[str, Any]) -> Dict[str, float]:
     return metrics
 
 def compute_efficiency(details: Dict[str, Any], fills: List[Dict[str, Any]]) -> Dict[str, float]:
-    all_time = get_porfolio_data(details, "allTime")
-    account_history = _series_values(all_time, "accountValueHistory")
-    
     # Average PnL Per Trade
     pnls = []
     if fills:
@@ -393,7 +404,7 @@ def compute_efficiency(details: Dict[str, Any], fills: List[Dict[str, Any]]) -> 
             if not isinstance(fill, dict):
                 logger.warning(f"Некорректный fill: {fill} ({type(fill)}), пропускается!")
                 continue
-            closed_pnl = fill.get("closedPnl")
+            closed_pnl = fill.get("closedPnl", None)
             if closed_pnl is not None:
                 closed_pnl = _to_float(closed_pnl)
                 pnls.append(closed_pnl)
@@ -408,14 +419,17 @@ def compute_efficiency(details: Dict[str, Any], fills: List[Dict[str, Any]]) -> 
     apr = _to_float(details.get("apr", 0.0))
     risk = compute_risk(details)
     max_dd = risk.get("max_drawdown", 0.0)
-    return_to_drawdown_ratio = (apr / (max_dd * 0.01)) if max_dd > 0 else 0.0
+    return_to_drawdown_ratio = (apr / (max_dd * 0.01)) if max_dd > 0.01 else 0.0
     
+    all_time = get_porfolio_data(details, "allTime")
+    account_history = _series_values(all_time, "accountValueHistory")
+
     if account_history:
         avg_tvl = statistics.mean([item[1] for item in account_history])
     else:
         avg_tvl = 0.0
-    
-    capital_eff = ((total_pnl / avg_tvl) * 100.0) if avg_tvl > 0 else 0.0
+
+    capital_eff = ((total_pnl / avg_tvl) * 100.0) if avg_tvl >= 0.01 else 0.0
     return {
         "average_pnl_per_trade": avg_pnl_trade,
         "profit_factor": profit_factor,

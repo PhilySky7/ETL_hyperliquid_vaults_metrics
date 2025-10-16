@@ -4,7 +4,7 @@ ETL for collecting vault data, calculating 30 metrics and writing to PostgreSQL.
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.12
 - PostgreSQL 13+
 - [uv](https://docs.astral.sh/uv/getting-started/) (for dependency management)
 
@@ -79,7 +79,7 @@ make makemigrations
 ### ETL Launch
 Sequential run (vaultsAddresses → vaultDetails → userFills → metrics → upsert):
 ```bash
-uv run main.py
+uv run python3 main.py
 ```
 
 Or, use Makefile command:
@@ -102,7 +102,7 @@ docker compose exec -it db psql -U postgres -d hyperliquid
 
 Or, use Makefile command:
 ```bash
-make db_connect
+make db_container_connect
 ```
 
 ### Project Structure
@@ -144,7 +144,7 @@ make makemigrations          # apply schema.sql via database.py
 make run                     # run python3 main.py
 make run_hl_etl_in_container # run project in container
 make logs                    # view logs
-make db_connect              # connect to db in container
+make db_container_connect    # connect to db in container
 ```
 
 ### Possible issues
